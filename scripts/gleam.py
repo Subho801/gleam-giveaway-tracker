@@ -6,7 +6,7 @@ from html import unescape
 
 import requests
 
-URL = "https://www.reddit.com/r/FreeGameFindings/new/.rss?limit=50"
+URL = "https://www.reddit.com/r/FreeGameFindings/new/.rss?limit=100"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; SubhoGleamTracker/1.0)"
@@ -40,13 +40,18 @@ BLOCK_WORDS = [
 ]
 
 
-def is_game_key(title: str) -> bool:
-    t = title.lower()
+def is_game_key(text: str) -> bool:
+    t = text.lower()
     return any(w in t for w in KEEP_WORDS) and not any(w in t for w in BLOCK_WORDS)
 
 
 def clean_text(text: str) -> str:
     return unescape(re.sub(r"\s+", " ", text or "")).strip()
+
+
+def extract_gleam_link(text: str) -> str:
+    match = re.search(r"https?://(?:www\.)?gleam\.io/[^\s\"'<)]+", text)
+    return match.group(0) if match else ""
 
 
 res = requests.get(URL, headers=HEADERS, timeout=30)
@@ -59,17 +64,27 @@ items = []
 
 for entry in root.findall("atom:entry", ns):
     title = clean_text(entry.findtext("atom:title", default="", namespaces=ns))
-    link_el = entry.find("atom:link", ns)
-    url = link_el.attrib.get("href", "") if link_el is not None else ""
+    summary = clean_text(entry.findtext("atom:content", default="", namespaces=ns))
 
-    if not is_game_key(title):
+    link_el = entry.find("atom:link", ns)
+    reddit_url = link_el.attrib.get("href", "") if link_el is not None else ""
+
+    combined = f"{title} {summary}".lower()
+
+    if "gleam.io" not in combined:
         continue
+
+    if not is_game_key(combined):
+        continue
+
+    gleam_url = extract_gleam_link(summary) or reddit_url
 
     items.append(
         {
             "title": title,
-            "url": url,
-            "platform": "Steam" if "steam" in title.lower() else "Game Key",
+            "url": gleam_url,
+            "redditUrl": reddit_url,
+            "platform": "Steam" if "steam" in combined else "Game Key",
             "source": "r/FreeGameFindings",
         }
     )
@@ -83,4 +98,4 @@ output = {
 with open("data/gleam-giveaways.json", "w", encoding="utf-8") as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
 
-print(f"Saved {len(items)} giveaways")
+print(f"Saved {len(items)} Gleam game key giveaways")
