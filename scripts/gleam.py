@@ -1,46 +1,76 @@
 import json
-import requests
+import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from html import unescape
 
-URL = "https://www.reddit.com/r/FreeGameFindings/new.json?limit=50"
+import requests
+
+URL = "https://www.reddit.com/r/FreeGameFindings/new/.rss?limit=50"
 
 HEADERS = {
-    "User-Agent": "Subho-GleamTracker/1.0"
+    "User-Agent": "Mozilla/5.0 (compatible; SubhoGleamTracker/1.0)"
 }
 
-KEYWORDS = [
+KEEP_WORDS = [
+    "steam",
     "steam key",
     "steam keys",
-    "gleam.io",
-    "gleam",
-    "free steam keys",
-    "steam giveaway",
+    "game key",
+    "game keys",
+    "dlc",
+    "(game)",
+    "[steam]",
 ]
 
-response = requests.get(URL, headers=HEADERS, timeout=30)
-response.raise_for_status()
+BLOCK_WORDS = [
+    "gift card",
+    "paypal",
+    "amazon",
+    "keyboard",
+    "mouse",
+    "headset",
+    "monitor",
+    "hardware",
+    "robux",
+    "v-bucks",
+    "nitro",
+    "uc gift",
+    "pubg mobile",
+]
 
-posts = response.json()["data"]["children"]
+
+def is_game_key(title: str) -> bool:
+    t = title.lower()
+    return any(w in t for w in KEEP_WORDS) and not any(w in t for w in BLOCK_WORDS)
+
+
+def clean_text(text: str) -> str:
+    return unescape(re.sub(r"\s+", " ", text or "")).strip()
+
+
+res = requests.get(URL, headers=HEADERS, timeout=30)
+res.raise_for_status()
+
+root = ET.fromstring(res.text)
+ns = {"atom": "http://www.w3.org/2005/Atom"}
 
 items = []
 
-for post in posts:
-    data = post["data"]
+for entry in root.findall("atom:entry", ns):
+    title = clean_text(entry.findtext("atom:title", default="", namespaces=ns))
+    link_el = entry.find("atom:link", ns)
+    url = link_el.attrib.get("href", "") if link_el is not None else ""
 
-    title = data.get("title", "")
-    url = data.get("url", "")
-
-    combined = f"{title} {url}".lower()
-
-    if not any(keyword in combined for keyword in KEYWORDS):
+    if not is_game_key(title):
         continue
 
     items.append(
         {
             "title": title,
             "url": url,
-            "created": data.get("created_utc"),
-            "thumbnail": data.get("thumbnail"),
+            "platform": "Steam" if "steam" in title.lower() else "Game Key",
+            "source": "r/FreeGameFindings",
         }
     )
 
