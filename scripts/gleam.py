@@ -3,7 +3,6 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html import unescape
-from urllib.parse import quote
 
 import requests
 
@@ -47,12 +46,32 @@ def clean_text(text: str) -> str:
 
 def is_game_key(text: str) -> bool:
     t = text.lower()
-    return any(w in t for w in KEEP_WORDS) and not any(w in t for w in BLOCK_WORDS)
+    return any(w in t for w in KEEP_WORDS) and not any(
+        w in t for w in BLOCK_WORDS
+    )
 
 
 def extract_gleam_link(text: str) -> str:
     match = re.search(r"https?://(?:www\.)?gleam\.io/[^\s\"'<)]+", text)
     return match.group(0) if match else ""
+
+
+def extract_reddit_image(text: str) -> str:
+    match = re.search(
+        r"https?://[^\s\"'<)]+(?:jpg|jpeg|png|webp)(?:\?[^\s\"'<)]*)?",
+        text,
+        re.I,
+    )
+
+    if not match:
+        return ""
+
+    image = unescape(match.group(0))
+
+    if image.startswith("//"):
+        image = "https:" + image
+
+    return image.replace("&amp;", "&")
 
 
 def clean_game_title(title: str) -> str:
@@ -67,36 +86,43 @@ def clean_game_title(title: str) -> str:
     return clean_text(title)
 
 
-def get_steam_app(game_title: str):
+def get_gleam_image(url: str) -> str:
     try:
-        q = quote(game_title)
-        url = f"https://store.steampowered.com/api/storesearch/?term={q}&l=english&cc=us"
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        if not url or "gleam.io" not in url:
+            return ""
 
-        if r.status_code != 200:
-            return None
+        response = requests.get(url, headers=HEADERS, timeout=20)
 
-        data = r.json()
-        items = data.get("items", [])
+        if response.status_code != 200:
+            return ""
 
-        if not items:
-            return None
+        html = response.text
 
-        first = items[0]
-        appid = first.get("id")
+        patterns = [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
+            r'<img[^>]+src=["\']([^"\']+)["\'][^>]+class=["\'][^"\']*(?:campaign|reward|image|media)[^"\']*["\']',
+            r'<img[^>]+class=["\'][^"\']*(?:campaign|reward|image|media)[^"\']*["\'][^>]+src=["\']([^"\']+)["\']',
+        ]
 
-        if not appid:
-            return None
+        for pattern in patterns:
+            match = re.search(pattern, html, re.I)
 
-        return {
-            "appid": appid,
-            "steamName": first.get("name", game_title),
-            "steamUrl": f"https://store.steampowered.com/app/{appid}",
-            "image": f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
-        }
+            if match:
+                image = unescape(match.group(1)).replace("&amp;", "&")
+
+                if image.startswith("//"):
+                    image = "https:" + image
+
+                if image.startswith("http"):
+                    return image
+
+        return extract_reddit_image(html)
 
     except Exception:
-        return None
+        return ""
 
 
 res = requests.get(URL, headers=HEADERS, timeout=30)
@@ -126,7 +152,7 @@ for entry in root.findall("atom:entry", ns):
     gleam_url = extract_gleam_link(content) or reddit_url
     game_title = clean_game_title(title)
 
-    steam = get_steam_app(game_title)
+    image = get_gleam_image(gleam_url) or extract_reddit_image(content)
 
     items.append(
         {
@@ -135,10 +161,7 @@ for entry in root.findall("atom:entry", ns):
             "url": gleam_url,
             "redditUrl": reddit_url,
             "platform": "Steam" if "steam" in combined else "Game Key",
-            "appid": steam.get("appid") if steam else None,
-            "steamName": steam.get("steamName") if steam else "",
-            "steamUrl": steam.get("steamUrl") if steam else "",
-            "image": steam.get("image") if steam else "",
+            "image": image,
             "source": "r/FreeGameFindings",
         }
     )
