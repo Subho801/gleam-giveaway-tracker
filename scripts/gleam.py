@@ -12,24 +12,90 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; SubhoGleamTracker/1.0)"
 }
 
-KEEP_WORDS = ["steam", "steam key", "steam keys", "game key", "game keys", "dlc", "(game)", "[steam]"]
+KEEP_WORDS = [
+    "steam",
+    "steam key",
+    "steam keys",
+    "game key",
+    "game keys",
+    "dlc",
+    "(game)",
+    "[steam]",
+]
 
-BLOCK_WORDS = ["gift card", "paypal", "amazon", "keyboard", "mouse", "headset", "monitor", "hardware", "robux", "v-bucks", "nitro", "uc gift", "pubg mobile"]
+BLOCK_WORDS = [
+    "gift card",
+    "paypal",
+    "amazon",
+    "keyboard",
+    "mouse",
+    "headset",
+    "monitor",
+    "hardware",
+    "robux",
+    "v-bucks",
+    "nitro",
+    "uc gift",
+    "pubg mobile",
+]
+
 
 def clean_text(text: str) -> str:
     return unescape(re.sub(r"\s+", " ", text or "")).strip()
 
+
 def is_game_key(text: str) -> bool:
     t = text.lower()
-    return any(w in t for w in KEEP_WORDS) and not any(w in t for w in BLOCK_WORDS)
+    return any(w in t for w in KEEP_WORDS) and not any(
+        w in t for w in BLOCK_WORDS
+    )
+
 
 def extract_gleam_link(text: str) -> str:
     match = re.search(r"https?://(?:www\.)?gleam\.io/[^\s\"'<)]+", text)
     return match.group(0) if match else ""
 
+
 def extract_image(text: str) -> str:
     match = re.search(r"https?://[^\s\"'<)]+(?:jpg|jpeg|png|webp)", text, re.I)
     return match.group(0) if match else ""
+
+
+def get_gleam_image(url: str) -> str:
+    try:
+        if not url or "gleam.io" not in url:
+            return ""
+
+        r = requests.get(url, headers=HEADERS, timeout=20)
+
+        if r.status_code != 200:
+            return ""
+
+        html = r.text
+
+        match = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            html,
+            re.I,
+        )
+
+        if match:
+            return unescape(match.group(1))
+
+        match = re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            html,
+            re.I,
+        )
+
+        if match:
+            return unescape(match.group(1))
+
+        return extract_image(html)
+
+    except Exception:
+        return ""
+
 
 res = requests.get(URL, headers=HEADERS, timeout=30)
 res.raise_for_status()
@@ -56,16 +122,18 @@ for entry in root.findall("atom:entry", ns):
         continue
 
     gleam_url = extract_gleam_link(content) or reddit_url
-    image = get_gleam_image(gleam_url)
+    image = get_gleam_image(gleam_url) or extract_image(content)
 
-    items.append({
-        "title": title,
-        "url": gleam_url,
-        "redditUrl": reddit_url,
-        "platform": "Steam" if "steam" in combined else "Game Key",
-        "image": image,
-        "source": "r/FreeGameFindings"
-    })
+    items.append(
+        {
+            "title": title,
+            "url": gleam_url,
+            "redditUrl": reddit_url,
+            "platform": "Steam" if "steam" in combined else "Game Key",
+            "image": image,
+            "source": "r/FreeGameFindings",
+        }
+    )
 
 output = {
     "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -77,29 +145,3 @@ with open("data/gleam-giveaways.json", "w", encoding="utf-8") as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
 
 print(f"Saved {len(items)} Gleam game key giveaways")
-def get_gleam_image(url: str) -> str:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        if r.status_code != 200:
-            return ""
-
-        html = r.text
-
-        match = re.search(
-            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-            html,
-            re.I,
-        )
-
-        if match:
-            return unescape(match.group(1))
-
-        match = re.search(
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-            html,
-            re.I,
-        )
-
-        return unescape(match.group(1)) if match else ""
-    except Exception:
-        return ""
