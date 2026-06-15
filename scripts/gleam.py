@@ -3,6 +3,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html import unescape
+from urllib.parse import quote
 
 import requests
 
@@ -46,9 +47,7 @@ def clean_text(text: str) -> str:
 
 def is_game_key(text: str) -> bool:
     t = text.lower()
-    return any(w in t for w in KEEP_WORDS) and not any(
-        w in t for w in BLOCK_WORDS
-    )
+    return any(w in t for w in KEEP_WORDS) and not any(w in t for w in BLOCK_WORDS)
 
 
 def extract_gleam_link(text: str) -> str:
@@ -56,45 +55,48 @@ def extract_gleam_link(text: str) -> str:
     return match.group(0) if match else ""
 
 
-def extract_image(text: str) -> str:
-    match = re.search(r"https?://[^\s\"'<)]+(?:jpg|jpeg|png|webp)", text, re.I)
-    return match.group(0) if match else ""
+def clean_game_title(title: str) -> str:
+    title = re.sub(r"\[steam\]", "", title, flags=re.I)
+    title = re.sub(r"\(game\)", "", title, flags=re.I)
+    title = re.sub(r"\(steam\)", "", title, flags=re.I)
+    title = re.sub(r"free\s*x?\d*\s*", "", title, flags=re.I)
+    title = re.sub(r"steam\s*keys?", "", title, flags=re.I)
+    title = re.sub(r"game\s*keys?", "", title, flags=re.I)
+    title = re.sub(r"giveaway", "", title, flags=re.I)
+    title = re.sub(r"[-–—|]+", " ", title)
+    return clean_text(title)
 
 
-def get_gleam_image(url: str) -> str:
+def get_steam_app(game_title: str):
     try:
-        if not url or "gleam.io" not in url:
-            return ""
-
+        q = quote(game_title)
+        url = f"https://store.steampowered.com/api/storesearch/?term={q}&l=english&cc=us"
         r = requests.get(url, headers=HEADERS, timeout=20)
 
         if r.status_code != 200:
-            return ""
+            return None
 
-        html = r.text
+        data = r.json()
+        items = data.get("items", [])
 
-        match = re.search(
-            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-            html,
-            re.I,
-        )
+        if not items:
+            return None
 
-        if match:
-            return unescape(match.group(1))
+        first = items[0]
+        appid = first.get("id")
 
-        match = re.search(
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-            html,
-            re.I,
-        )
+        if not appid:
+            return None
 
-        if match:
-            return unescape(match.group(1))
-
-        return extract_image(html)
+        return {
+            "appid": appid,
+            "steamName": first.get("name", game_title),
+            "steamUrl": f"https://store.steampowered.com/app/{appid}",
+            "image": f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
+        }
 
     except Exception:
-        return ""
+        return None
 
 
 res = requests.get(URL, headers=HEADERS, timeout=30)
@@ -122,15 +124,21 @@ for entry in root.findall("atom:entry", ns):
         continue
 
     gleam_url = extract_gleam_link(content) or reddit_url
-    image = get_gleam_image(gleam_url) or extract_image(content)
+    game_title = clean_game_title(title)
+
+    steam = get_steam_app(game_title)
 
     items.append(
         {
             "title": title,
+            "gameTitle": game_title,
             "url": gleam_url,
             "redditUrl": reddit_url,
             "platform": "Steam" if "steam" in combined else "Game Key",
-            "image": image,
+            "appid": steam.get("appid") if steam else None,
+            "steamName": steam.get("steamName") if steam else "",
+            "steamUrl": steam.get("steamUrl") if steam else "",
+            "image": steam.get("image") if steam else "",
             "source": "r/FreeGameFindings",
         }
     )
