@@ -56,7 +56,7 @@ for entry in root.findall("atom:entry", ns):
         continue
 
     gleam_url = extract_gleam_link(content) or reddit_url
-    image = extract_image(content)
+    image = get_gleam_image(gleam_url)
 
     items.append({
         "title": title,
@@ -77,3 +77,29 @@ with open("data/gleam-giveaways.json", "w", encoding="utf-8") as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
 
 print(f"Saved {len(items)} Gleam game key giveaways")
+def get_gleam_image(url: str) -> str:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            return ""
+
+        html = r.text
+
+        match = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            html,
+            re.I,
+        )
+
+        if match:
+            return unescape(match.group(1))
+
+        match = re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            html,
+            re.I,
+        )
+
+        return unescape(match.group(1)) if match else ""
+    except Exception:
+        return ""
