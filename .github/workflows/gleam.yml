@@ -22,11 +22,14 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: python scripts/gleam.py
+      - name: Run Gleam tracker
+        env:
+          STEAMGRIDDB_API_KEY: ${{ secrets.STEAMGRIDDB_API_KEY }}
+        run: python scripts/gleam.py
 
       - name: Commit JSON
         run: |
-          git config user.name "github-actions"
+          git config user.name "actions-user"
           git config user.email "actions@github.com"
 
           git add data/gleam-giveaways.json
