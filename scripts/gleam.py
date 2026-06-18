@@ -1,12 +1,15 @@
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html import unescape
+from urllib.parse import quote
 
 import requests
 
-URL = "https://www.reddit.com/r/FreeGameFindings/new/.rss?limit=100"
+REDDIT_RSS_URL = "https://www.reddit.com/r/FreeGameFindings/new/.rss?limit=100"
+STEAMGRIDDB_API_KEY = os.getenv("STEAMGRIDDB_API_KEY", "")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; SubhoGleamTracker/1.0)"
@@ -51,29 +54,6 @@ def is_game_key(text: str) -> bool:
     )
 
 
-def extract_gleam_link(text: str) -> str:
-    match = re.search(r"https?://(?:www\.)?gleam\.io/[^\s\"'<)]+", text)
-    return match.group(0) if match else ""
-
-
-def extract_reddit_image(text: str) -> str:
-    match = re.search(
-        r"https?://[^\s\"'<)]+(?:jpg|jpeg|png|webp)(?:\?[^\s\"'<)]*)?",
-        text,
-        re.I,
-    )
-
-    if not match:
-        return ""
-
-    image = unescape(match.group(0))
-
-    if image.startswith("//"):
-        image = "https:" + image
-
-    return image.replace("&amp;", "&")
-
-
 def clean_game_title(title: str) -> str:
     title = re.sub(r"\[steam\]", "", title, flags=re.I)
     title = re.sub(r"\(game\)", "", title, flags=re.I)
@@ -86,46 +66,67 @@ def clean_game_title(title: str) -> str:
     return clean_text(title)
 
 
-def get_gleam_image(url: str) -> str:
+def extract_gleam_link(text: str) -> str:
+    match = re.search(r"https?://(?:www\.)?gleam\.io/[^\s\"'<)]+", text)
+    return match.group(0) if match else ""
+
+
+def get_steamgriddb_banner(game_title: str) -> str:
+    if not STEAMGRIDDB_API_KEY:
+        return ""
+
     try:
-        if not url or "gleam.io" not in url:
+        search_url = (
+            "https://www.steamgriddb.com/api/v2/search/autocomplete/"
+            + quote(game_title)
+        )
+
+        headers = {
+            "Authorization": f"Bearer {STEAMGRIDDB_API_KEY}",
+            "User-Agent": "SubhoGleamTracker/1.0",
+        }
+
+        search_res = requests.get(search_url, headers=headers, timeout=20)
+        if search_res.status_code != 200:
             return ""
 
-        response = requests.get(url, headers=HEADERS, timeout=20)
+        search_data = search_res.json()
+        games = search_data.get("data", [])
 
-        if response.status_code != 200:
+        if not games:
             return ""
 
-        html = response.text
+        game_id = games[0].get("id")
+        if not game_id:
+            return ""
 
-        patterns = [
-            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
-            r'<img[^>]+src=["\']([^"\']+)["\'][^>]+class=["\'][^"\']*(?:campaign|reward|image|media)[^"\']*["\']',
-            r'<img[^>]+class=["\'][^"\']*(?:campaign|reward|image|media)[^"\']*["\'][^>]+src=["\']([^"\']+)["\']',
-        ]
+        heroes_url = f"https://www.steamgriddb.com/api/v2/heroes/game/{game_id}"
+        heroes_res = requests.get(heroes_url, headers=headers, timeout=20)
 
-        for pattern in patterns:
-            match = re.search(pattern, html, re.I)
+        if heroes_res.status_code == 200:
+            heroes_data = heroes_res.json()
+            heroes = heroes_data.get("data", [])
 
-            if match:
-                image = unescape(match.group(1)).replace("&amp;", "&")
+            if heroes:
+                return heroes[0].get("url", "")
 
-                if image.startswith("//"):
-                    image = "https:" + image
+        grids_url = f"https://www.steamgriddb.com/api/v2/grids/game/{game_id}?dimensions=920x430"
+        grids_res = requests.get(grids_url, headers=headers, timeout=20)
 
-                if image.startswith("http"):
-                    return image
+        if grids_res.status_code == 200:
+            grids_data = grids_res.json()
+            grids = grids_data.get("data", [])
 
-        return extract_reddit_image(html)
+            if grids:
+                return grids[0].get("url", "")
+
+        return ""
 
     except Exception:
         return ""
 
 
-res = requests.get(URL, headers=HEADERS, timeout=30)
+res = requests.get(REDDIT_RSS_URL, headers=HEADERS, timeout=30)
 res.raise_for_status()
 
 root = ET.fromstring(res.text)
@@ -151,8 +152,7 @@ for entry in root.findall("atom:entry", ns):
 
     gleam_url = extract_gleam_link(content) or reddit_url
     game_title = clean_game_title(title)
-
-    image = get_gleam_image(gleam_url) or extract_reddit_image(content)
+    image = get_steamgriddb_banner(game_title)
 
     items.append(
         {
