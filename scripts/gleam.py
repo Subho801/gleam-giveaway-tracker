@@ -93,10 +93,22 @@ def get_steamgriddb_banner(game_title: str) -> str:
         search_data = search_res.json()
         games = search_data.get("data", [])
 
-        if not games:
-            return ""
+if not games:
+    return ""
 
-        game_id = games[0].get("id")
+best = None
+
+for game in games:
+    name = game.get("name", "").lower()
+
+    if any(word in name for word in game_title.lower().split()):
+        best = game
+        break
+
+if not best:
+    best = games[0]
+
+game_id = best.get("id")
         if not game_id:
             return ""
 
