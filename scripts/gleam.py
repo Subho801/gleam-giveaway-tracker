@@ -93,22 +93,21 @@ def get_steamgriddb_banner(game_title: str) -> str:
         search_data = search_res.json()
         games = search_data.get("data", [])
 
-if not games:
-    return ""
+        if not games:
+            return ""
 
-best = None
+        best = None
 
-for game in games:
-    name = game.get("name", "").lower()
+        for game in games:
+            name = game.get("name", "").lower()
+            if any(word in name for word in game_title.lower().split()):
+                best = game
+                break
 
-    if any(word in name for word in game_title.lower().split()):
-        best = game
-        break
+        if not best:
+            best = games[0]
 
-if not best:
-    best = games[0]
-
-game_id = best.get("id")
+        game_id = best.get("id")
         if not game_id:
             return ""
 
@@ -118,7 +117,6 @@ game_id = best.get("id")
         if heroes_res.status_code == 200:
             heroes_data = heroes_res.json()
             heroes = heroes_data.get("data", [])
-
             if heroes:
                 return heroes[0].get("url", "")
 
@@ -128,7 +126,6 @@ game_id = best.get("id")
         if grids_res.status_code == 200:
             grids_data = grids_res.json()
             grids = grids_data.get("data", [])
-
             if grids:
                 return grids[0].get("url", "")
 
