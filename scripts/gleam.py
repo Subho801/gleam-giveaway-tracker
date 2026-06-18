@@ -9,7 +9,10 @@ from urllib.parse import quote
 import requests
 
 REDDIT_RSS_URL = "https://www.reddit.com/r/FreeGameFindings/new/.rss?limit=100"
+
 STEAMGRIDDB_API_KEY = os.getenv("STEAMGRIDDB_API_KEY", "")
+IGDB_CLIENT_ID = os.getenv("IGDB_CLIENT_ID", "")
+IGDB_CLIENT_SECRET = os.getenv("IGDB_CLIENT_SECRET", "")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; SubhoGleamTracker/1.0)"
@@ -49,9 +52,7 @@ def clean_text(text: str) -> str:
 
 def is_game_key(text: str) -> bool:
     t = text.lower()
-    return any(w in t for w in KEEP_WORDS) and not any(
-        w in t for w in BLOCK_WORDS
-    )
+    return any(w in t for w in KEEP_WORDS) and not any(w in t for w in BLOCK_WORDS)
 
 
 def clean_game_title(title: str) -> str:
@@ -71,69 +72,140 @@ def extract_gleam_link(text: str) -> str:
     return match.group(0) if match else ""
 
 
-def get_steamgriddb_banner(game_title: str) -> str:
+def get_steamgriddb_image(game_title: str) -> str:
     if not STEAMGRIDDB_API_KEY:
         return ""
 
     try:
-        search_url = (
-            "https://www.steamgriddb.com/api/v2/search/autocomplete/"
-            + quote(game_title)
-        )
-
         headers = {
             "Authorization": f"Bearer {STEAMGRIDDB_API_KEY}",
             "User-Agent": "SubhoGleamTracker/1.0",
         }
 
+        search_url = (
+            "https://www.steamgriddb.com/api/v2/search/autocomplete/"
+            + quote(game_title)
+        )
+
         search_res = requests.get(search_url, headers=headers, timeout=20)
         if search_res.status_code != 200:
             return ""
 
-        search_data = search_res.json()
-        games = search_data.get("data", [])
-
+        games = search_res.json().get("data", [])
         if not games:
             return ""
 
-        best = None
+        best = games[0]
 
         for game in games:
             name = game.get("name", "").lower()
-            if any(word in name for word in game_title.lower().split()):
+            if game_title.lower() in name or name in game_title.lower():
                 best = game
                 break
-
-        if not best:
-            best = games[0]
 
         game_id = best.get("id")
         if not game_id:
             return ""
 
-        heroes_url = f"https://www.steamgriddb.com/api/v2/heroes/game/{game_id}"
-        heroes_res = requests.get(heroes_url, headers=headers, timeout=20)
+        endpoints = [
+            f"https://www.steamgriddb.com/api/v2/heroes/game/{game_id}",
+            f"https://www.steamgriddb.com/api/v2/grids/game/{game_id}?dimensions=920x430",
+            f"https://www.steamgriddb.com/api/v2/grids/game/{game_id}",
+        ]
 
-        if heroes_res.status_code == 200:
-            heroes_data = heroes_res.json()
-            heroes = heroes_data.get("data", [])
-            if heroes:
-                return heroes[0].get("url", "")
+        for endpoint in endpoints:
+            r = requests.get(endpoint, headers=headers, timeout=20)
+            if r.status_code != 200:
+                continue
 
-        grids_url = f"https://www.steamgriddb.com/api/v2/grids/game/{game_id}?dimensions=920x430"
-        grids_res = requests.get(grids_url, headers=headers, timeout=20)
-
-        if grids_res.status_code == 200:
-            grids_data = grids_res.json()
-            grids = grids_data.get("data", [])
-            if grids:
-                return grids[0].get("url", "")
+            results = r.json().get("data", [])
+            if results:
+                return results[0].get("url", "")
 
         return ""
 
     except Exception:
         return ""
 
+
+def get_igdb_token() -> str:
+    if not IGDB_CLIENT_ID or not IGDB_CLIENT_SECRET:
+        return ""
+
+    try:
+        url = "https://id.twitch.tv/oauth2/token"
+        params = {
+            "client_id": IGDB_CLIENT_ID,
+            "client_secret": IGDB_CLIENT_SECRET,
+            "grant_type": "client_credentials",
+        }
+
+        res = requests.post(url, params=params, timeout=20)
+        if res.status_code != 200:
+            return ""
+
+        return res.json().get("access_token", "")
+
+    except Exception:
+        return ""
+
+
+def get_igdb_image(game_title: str, token: str) -> str:
+    if not token:
+        return ""
+
+    try:
+        headers = {
+            "Client-ID": IGDB_CLIENT_ID,
+            "Authorization": f"Bearer {token}",
+        }
+
+        query = f'''
+            search "{game_title}";
+            fields name,cover.image_id,screenshots.image_id,artworks.image_id;
+            limit 5;
+        '''
+
+        res = requests.post(
+            "https://api.igdb.com/v4/games",
+            headers=headers,
+            data=query,
+            timeout=20,
+        )
+
+        if res.status_code != 200:
+            return ""
+
+        games = res.json()
+        if not games:
+            return ""
+
+        best = games[0]
+
+        image_id = ""
+
+        if best.get("artworks"):
+            image_id = best["artworks"][0].get("image_id", "")
+            if image_id:
+                return f"https://images.igdb.com/igdb/image/upload/t_screenshot_big/{image_id}.jpg"
+
+        if best.get("screenshots"):
+            image_id = best["screenshots"][0].get("image_id", "")
+            if image_id:
+                return f"https://images.igdb.com/igdb/image/upload/t_screenshot_big/{image_id}.jpg"
+
+        if best.get("cover"):
+            image_id = best["cover"].get("image_id", "")
+            if image_id:
+                return f"https://images.igdb.com/igdb/image/upload/t_cover_big/{image_id}.jpg"
+
+        return ""
+
+    except Exception:
+        return ""
+
+
+igdb_token = get_igdb_token()
 
 res = requests.get(REDDIT_RSS_URL, headers=HEADERS, timeout=30)
 res.raise_for_status()
@@ -161,7 +233,8 @@ for entry in root.findall("atom:entry", ns):
 
     gleam_url = extract_gleam_link(content) or reddit_url
     game_title = clean_game_title(title)
-    image = get_steamgriddb_banner(game_title)
+
+    image = get_steamgriddb_image(game_title) or get_igdb_image(game_title, igdb_token)
 
     items.append(
         {
